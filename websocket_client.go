@@ -24,12 +24,16 @@
 package wsclient
 
 import (
+	"bytes"
+	"crypto/tls"
 	"fmt"
-	"io/ioutil"
-	"time"
-
 	"github.com/gorilla/websocket"
-	iwebsocket "github.com/kataras/iris/adapters/websocket"
+	iwebsocket "gopkg.in/kataras/iris.v6/adaptors/websocket"
+	"net"
+	"net/http"
+	"net/url"
+	"strconv"
+	"time"
 )
 
 type (
@@ -46,7 +50,7 @@ type (
 
 //Client presents a subset of iris.websocket.Connection interface
 type Client struct {
-	conn                     *websocket.Connection
+	conn                     *websocket.Conn
 	config                   iwebsocket.Config
 	wchan                    chan []byte
 	pchan                    chan []byte
@@ -66,7 +70,7 @@ func (c *Client) readPump() {
 		return nil
 	})
 	c.conn.SetPingHandler(func(s string) error {
-		fmt.Printf("received PING (%s) from %s\n", s, con.UnderlyingConn().RemoteAddr().String())
+		fmt.Printf("received PING (%s) from %s\n", s, c.conn.UnderlyingConn().RemoteAddr().String())
 		c.conn.SetReadDeadline(time.Now().Add(c.config.ReadTimeout))
 		c.pchan <- []byte(s)
 		return nil
@@ -159,7 +163,7 @@ func (c *Client) writePump() {
 			}
 
 		case <-pingtimer.C:
-			c.con.SetWriteDeadline(time.Now().Add(c.config.WriteTimeout))
+			c.conn.SetWriteDeadline(time.Now().Add(c.config.WriteTimeout))
 			fmt.Printf("sending PING to %s\n", c.conn.UnderlyingConn().RemoteAddr().String())
 			if err := c.conn.WriteControl(websocket.PingMessage, []byte{}, time.Now().Add(c.config.WriteTimeout)); err != nil {
 				return
@@ -178,7 +182,7 @@ func (c *Client) Emit(event string, data interface{}) error {
 	if err != nil {
 		return err
 	}
-	e.EmitMessage([]byte(message))
+	c.wchan <- []byte(message)
 	return nil
 }
 
@@ -199,7 +203,7 @@ func (c *Client) On(event string, f MessageFunc) {
 		c.onEventListeners[event] = make([]MessageFunc, 0)
 	}
 
-	c.onEventListeners[event] = append(c.onEventListeners[event], cb)
+	c.onEventListeners[event] = append(c.onEventListeners[event], f)
 }
 
 func (c *Client) Disconnect() error {
@@ -250,7 +254,7 @@ type WSDialer struct {
 
 func (wsd *WSDialer) Dial(urlStr string, requestHeader http.Header, config iwebsocket.Config) (*Client, *http.Response, error) {
 	if wsd.dialer == nil {
-		wsd.dialer = New(websocket.Dialer)
+		wsd.dialer = new(websocket.Dialer)
 	}
 	wsd.dialer.NetDial = wsd.NetDial
 	wsd.dialer.Proxy = wsd.Proxy
@@ -261,11 +265,11 @@ func (wsd *WSDialer) Dial(urlStr string, requestHeader http.Header, config iwebs
 	wsd.dialer.Subprotocols = wsd.Subprotocols
 	wsd.dialer.EnableCompression = wsd.EnableCompression
 	wsd.dialer.Jar = wsd.Jar
-	conn, response, err = wsd.dialer.Dial(urlStr, requestHeader)
+	conn, response, err := wsd.dialer.Dial(urlStr, requestHeader)
 	if err != nil {
 		return nil, response, err
 	}
-	c := New(Client)
+	c := new(Client)
 	c.conn = conn
 	c.config = config
 	c.config.Validate()
