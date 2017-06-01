@@ -27,13 +27,14 @@ import (
 	"bytes"
 	"crypto/tls"
 	"fmt"
-	"github.com/gorilla/websocket"
-	iwebsocket "gopkg.in/kataras/iris.v6/adaptors/websocket"
 	"net"
 	"net/http"
 	"net/url"
 	"strconv"
 	"time"
+
+	"github.com/gorilla/websocket"
+	iwebsocket "gopkg.in/kataras/iris.v6/adaptors/websocket"
 )
 
 type (
@@ -145,13 +146,16 @@ func (c *Client) writePump() {
 	for {
 		select {
 		case wmsg := <-c.wchan:
+			fmt.Printf("WP: writing %s\n", string(wmsg))
 			w, err := c.conn.NextWriter(websocket.TextMessage)
 			if err != nil {
+				fmt.Println("error getting NextWriter")
 				return
 			}
 			w.Write(wmsg)
 
 			if err := w.Close(); err != nil {
+				fmt.Println("error closing NextWriter")
 				return
 			}
 
@@ -182,6 +186,7 @@ func (c *Client) Emit(event string, data interface{}) error {
 	if err != nil {
 		return err
 	}
+	fmt.Printf("Message %s\n", string(message))
 	c.wchan <- []byte(message)
 	return nil
 }
@@ -272,6 +277,10 @@ func (wsd *WSDialer) Dial(urlStr string, requestHeader http.Header, config iwebs
 	c := new(Client)
 	c.conn = conn
 	c.config = config
+	c.config.Validate()
+	c.wchan = make(chan []byte)
+	c.pchan = make(chan []byte)
+	c.onEventListeners = make(map[string][]MessageFunc)
 	c.config.Validate()
 
 	go c.writePump()

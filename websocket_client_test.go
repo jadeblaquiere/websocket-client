@@ -22,3 +22,158 @@
 // SOFTWARE.
 
 package wsclient
+
+import (
+	"context"
+	"fmt"
+	"sync"
+	"testing"
+	"time"
+
+	"gopkg.in/kataras/iris.v6"
+	"gopkg.in/kataras/iris.v6/adaptors/httprouter"
+	"gopkg.in/kataras/iris.v6/adaptors/websocket"
+)
+
+// test server model used to test client code
+
+type indexResponse struct {
+	RequestIP string `json:"request_ip"`
+	Time      int64  `json:"unix_time"`
+}
+
+type wsClient struct {
+	con websocket.Connection
+	wss *wsServer
+}
+
+func (wsc *wsClient) echoRawMessage(message []byte) {
+	fmt.Println("recv :", string(message))
+	wsc.con.EmitMessage(message)
+}
+
+func (wsc *wsClient) echoString(message string) {
+	fmt.Println("recv :", message)
+	wsc.con.Emit("echo_reply", message)
+}
+
+func (wsc *wsClient) disconnect() {
+	fmt.Println("client disconnect @ ", time.Now().Format("2006-01-02 15:04:05.000000"))
+}
+
+type wsServer struct {
+	clients   []*wsClient
+	listMutex sync.Mutex
+	fw        *iris.Framework
+	ws        websocket.Server
+}
+
+func (wss *wsServer) connect(con websocket.Connection) {
+	wss.listMutex.Lock()
+	defer wss.listMutex.Unlock()
+
+	c := &wsClient{con: con, wss: wss}
+	wss.clients = append(wss.clients, c)
+
+	fmt.Printf("Connect # active clients : %d\n", len(wss.clients))
+
+	con.OnMessage(c.echoRawMessage)
+
+	con.On("echo", c.echoString)
+
+	con.OnDisconnect(c.disconnect)
+}
+
+func (wss *wsServer) disconnect(wsc *wsClient) {
+	wss.listMutex.Lock()
+	defer wss.listMutex.Unlock()
+
+	l := len(wss.clients)
+
+	if l == 0 {
+		panic("WSS:trying to delete client from empty list")
+	}
+
+	for p, v := range wss.clients {
+		if v == wsc {
+			wss.clients[p] = wss.clients[l-1]
+			wss.clients = wss.clients[:l-1]
+
+			fmt.Printf("Disconnect # active clients : %d\n", len(wss.clients))
+
+			return
+		}
+	}
+	panic("WSS:trying to delete client not in list")
+}
+
+func (wss *wsServer) index(ctx *iris.Context) {
+	t := time.Now().Unix()
+	ctx.JSON(iris.StatusOK, indexResponse{RequestIP: ctx.RemoteAddr(), Time: t})
+}
+
+func (wss *wsServer) startup() {
+	wss.fw = iris.New()
+	wss.fw.Adapt(httprouter.New())
+	wss.fw.Get("/", wss.index)
+	// create our echo websocket server
+	ws := websocket.New(websocket.Config{
+		ReadTimeout:     60 * time.Second,
+		WriteTimeout:    60 * time.Second,
+		ReadBufferSize:  1024,
+		WriteBufferSize: 1024,
+		BinaryMessages:  true,
+		Endpoint:        "/echo",
+	})
+
+	ws.OnConnection(wss.connect)
+
+	// Adapt the websocket server.
+	// you can adapt more than one of course.
+	wss.fw.Adapt(ws)
+
+	go wss.fw.Listen(":8080")
+}
+
+func (wss *wsServer) shutdown() {
+	ctx, _ := context.WithTimeout(context.Background(), 5*time.Second)
+	wss.fw.Shutdown(ctx)
+}
+
+func TestConnectAndWait(t *testing.T) {
+	var wss wsServer
+	wss.startup()
+	time.Sleep(1 * time.Second)
+	d := new(WSDialer)
+	client, _, err := d.Dial("ws://127.0.0.1:8080/echo", nil, websocket.Config{
+		ReadTimeout:     60 * time.Second,
+		WriteTimeout:    60 * time.Second,
+		PingPeriod:      9 * 6 * time.Second,
+		PongTimeout:     60 * time.Second,
+		ReadBufferSize:  1024,
+		WriteBufferSize: 1024,
+		BinaryMessages:  true,
+	})
+	if err != nil {
+		fmt.Println("Dialer error:", err)
+		t.Fail()
+	}
+	if client == nil {
+		fmt.Println("Dialer returned nil client")
+		t.Fail()
+	} else {
+		for i := 0; i < 65; i++ {
+			fmt.Printf("(sleeping) %s\n", time.Now().Format("2006-01-02 15:04:05.000000"))
+			time.Sleep(1 * time.Second)
+		}
+		fmt.Println("Dial complete")
+		time.Sleep(1 * time.Second)
+		client.On("echo_reply", func(s string) { fmt.Println("client echo_reply", s) })
+		fmt.Println("ON complete")
+		time.Sleep(1 * time.Second)
+		client.Emit("echo", "hello")
+		fmt.Println("Emit complete")
+		time.Sleep(1 * time.Second)
+	}
+	wss.shutdown()
+}
