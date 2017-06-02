@@ -66,12 +66,12 @@ func (c *Client) readPump() {
 	c.conn.SetReadLimit(c.config.MaxMessageSize)
 	c.conn.SetReadDeadline(time.Now().Add(c.config.ReadTimeout))
 	c.conn.SetPongHandler(func(s string) error {
-		fmt.Printf("received PONG from %s\n", c.conn.UnderlyingConn().RemoteAddr().String())
+		// fmt.Printf("received PONG from %s\n", c.conn.UnderlyingConn().RemoteAddr().String())
 		c.conn.SetReadDeadline(time.Now().Add(c.config.ReadTimeout))
 		return nil
 	})
 	c.conn.SetPingHandler(func(s string) error {
-		fmt.Printf("received PING (%s) from %s\n", s, c.conn.UnderlyingConn().RemoteAddr().String())
+		// fmt.Printf("received PING (%s) from %s\n", s, c.conn.UnderlyingConn().RemoteAddr().String())
 		c.conn.SetReadDeadline(time.Now().Add(c.config.ReadTimeout))
 		c.pchan <- []byte(s)
 		return nil
@@ -84,7 +84,7 @@ func (c *Client) readPump() {
 		}
 		c.conn.SetReadDeadline(time.Now().Add(c.config.ReadTimeout))
 
-		fmt.Println("recv:", string(message), "@", time.Now().Format("2006-01-02 15:04:05.000000"))
+		// fmt.Println("recv:", string(message), "@", time.Now().Format("2006-01-02 15:04:05.000000"))
 
 		c.messageReceived(message)
 	}
@@ -146,7 +146,7 @@ func (c *Client) writePump() {
 	for {
 		select {
 		case wmsg := <-c.wchan:
-			fmt.Printf("WP: writing %s\n", string(wmsg))
+			// fmt.Printf("WP: writing %s\n", string(wmsg))
 			w, err := c.conn.NextWriter(websocket.TextMessage)
 			if err != nil {
 				fmt.Println("error getting NextWriter")
@@ -161,14 +161,14 @@ func (c *Client) writePump() {
 
 		case pmsg := <-c.pchan:
 			c.conn.SetWriteDeadline(time.Now().Add(c.config.WriteTimeout))
-			fmt.Printf("sending PONG to %s\n", c.conn.UnderlyingConn().RemoteAddr().String())
+			// fmt.Printf("sending PONG to %s\n", c.conn.UnderlyingConn().RemoteAddr().String())
 			if err := c.conn.WriteControl(websocket.PongMessage, pmsg, time.Now().Add(c.config.WriteTimeout)); err != nil {
 				return
 			}
 
 		case <-pingtimer.C:
 			c.conn.SetWriteDeadline(time.Now().Add(c.config.WriteTimeout))
-			fmt.Printf("sending PING to %s\n", c.conn.UnderlyingConn().RemoteAddr().String())
+			// fmt.Printf("sending PING to %s\n", c.conn.UnderlyingConn().RemoteAddr().String())
 			if err := c.conn.WriteControl(websocket.PingMessage, []byte{}, time.Now().Add(c.config.WriteTimeout)); err != nil {
 				return
 			}
@@ -186,7 +186,7 @@ func (c *Client) Emit(event string, data interface{}) error {
 	if err != nil {
 		return err
 	}
-	fmt.Printf("Message %s\n", string(message))
+	// fmt.Printf("Message %s\n", string(message))
 	c.wchan <- []byte(message)
 	return nil
 }
