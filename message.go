@@ -1,6 +1,6 @@
 // with the exclusion of the package name this file is a verbatim copy of
 // iris/adapter/websocket/message.go
-package wsclient
+package websocket_client
 
 // The MIT License (MIT)
 //
