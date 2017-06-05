@@ -181,11 +181,15 @@ func (c *Client) writePump() {
 	}
 }
 
+// EmitMessage sends a native (raw) message to the socket. The server will
+// receive this message using the handler specified with OnMessage()
 func (c *Client) EmitMessage(nativeMessage []byte) error {
 	c.wchan <- nativeMessage
 	return nil
 }
 
+// Emit sends a message to a particular event queue. The server will receive
+// these messages via the handler specified using On()
 func (c *Client) Emit(event string, data interface{}) error {
 	message, err := websocketMessageSerialize(event, data)
 	if err != nil {
@@ -204,10 +208,15 @@ func (c *Client) Emit(event string, data interface{}) error {
 //
 //}
 
+// OnMessage designates a listener callback function for raw messages. If
+// multiple callback functions are specified, all will be called for each
+// message
 func (c *Client) OnMessage(f NativeMessageFunc) {
 	c.onNativeMessageListeners = append(c.onNativeMessageListeners, f)
 }
 
+// On designates a listener callback for a specific event tag.  If multiple
+// callback functions are specified, all will be called for each message
 func (c *Client) On(event string, f MessageFunc) {
 	if c.onEventListeners[event] == nil {
 		c.onEventListeners[event] = make([]MessageFunc, 0)

@@ -1,5 +1,5 @@
-// with the exclusion of the package name this file is a verbatim copy of
-// iris/adapter/websocket/message.go
+// with the exclusion of the package name the message protocol logic is a verbatim copy of
+// iris.v6/adapter/websocket/message.go
 package websocket_client
 
 // The MIT License (MIT)
