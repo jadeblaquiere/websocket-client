@@ -271,6 +271,9 @@ type WSDialer struct {
 	dialer *gwebsocket.Dialer
 }
 
+// Dial initiates a connection to a remote Iris server websocket listener
+// using the gorilla websocket Dialer and returns a Client connection
+// which can be used to emit and handle messages
 func (wsd *WSDialer) Dial(urlStr string, requestHeader http.Header, config iwebsocket.Config) (*Client, *http.Response, error) {
 	if wsd.dialer == nil {
 		wsd.dialer = new(gwebsocket.Dialer)
