@@ -225,9 +225,9 @@ func (c *Client) On(event string, f MessageFunc) {
 	c.onEventListeners[event] = append(c.onEventListeners[event], f)
 }
 
-func (c *Client) Disconnect() error {
-	return nil
-}
+//func (c *Client) Disconnect() error {
+//	return nil
+//}
 
 // WSDialer here is a shameless wrapper around gorilla.websocket.Dialer
 // which returns a wsclient.Client instead of the gorilla Connection on Dial()
