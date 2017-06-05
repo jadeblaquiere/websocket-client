@@ -33,7 +33,7 @@ import (
 	"strconv"
 	"time"
 
-	"github.com/gorilla/websocket"
+	gwebsocket "github.com/gorilla/websocket"
 	iwebsocket "gopkg.in/kataras/iris.v6/adaptors/websocket"
 )
 
@@ -49,9 +49,10 @@ type (
 	MessageFunc interface{}
 )
 
-//Client presents a subset of iris.websocket.Connection interface
+// Client presents a subset of iris.websocket.Connection interface to support
+// client-initiated connections using the Iris websocket message protocol
 type Client struct {
-	conn                     *websocket.Conn
+	conn                     *gwebsocket.Conn
 	config                   iwebsocket.Config
 	wchan                    chan []byte
 	pchan                    chan []byte
@@ -61,6 +62,8 @@ type Client struct {
 	onEventListeners         map[string][]MessageFunc
 }
 
+// in order to ensure all read operations are within a single goroutine
+// readPump processes incoming messages and dispatches them to messageReceived
 func (c *Client) readPump() {
 	defer c.conn.Close()
 	c.conn.SetReadLimit(c.config.MaxMessageSize)
@@ -86,7 +89,7 @@ func (c *Client) readPump() {
 
 		// fmt.Println("recv:", string(message), "@", time.Now().Format("2006-01-02 15:04:05.000000"))
 
-		c.messageReceived(message)
+		go c.messageReceived(message)
 	}
 }
 
@@ -139,6 +142,8 @@ func (c *Client) messageReceived(data []byte) {
 
 }
 
+// In order to ensure all write operations are within a single goroutine
+// writePump handles write operations to the socket serially from channels
 func (c *Client) writePump() {
 	pingtimer := time.NewTicker(c.config.PingPeriod)
 	defer c.conn.Close()
@@ -147,7 +152,7 @@ func (c *Client) writePump() {
 		select {
 		case wmsg := <-c.wchan:
 			// fmt.Printf("WP: writing %s\n", string(wmsg))
-			w, err := c.conn.NextWriter(websocket.TextMessage)
+			w, err := c.conn.NextWriter(gwebsocket.TextMessage)
 			if err != nil {
 				fmt.Println("error getting NextWriter")
 				return
@@ -162,14 +167,14 @@ func (c *Client) writePump() {
 		case pmsg := <-c.pchan:
 			c.conn.SetWriteDeadline(time.Now().Add(c.config.WriteTimeout))
 			// fmt.Printf("sending PONG to %s\n", c.conn.UnderlyingConn().RemoteAddr().String())
-			if err := c.conn.WriteControl(websocket.PongMessage, pmsg, time.Now().Add(c.config.WriteTimeout)); err != nil {
+			if err := c.conn.WriteControl(gwebsocket.PongMessage, pmsg, time.Now().Add(c.config.WriteTimeout)); err != nil {
 				return
 			}
 
 		case <-pingtimer.C:
 			c.conn.SetWriteDeadline(time.Now().Add(c.config.WriteTimeout))
 			// fmt.Printf("sending PING to %s\n", c.conn.UnderlyingConn().RemoteAddr().String())
-			if err := c.conn.WriteControl(websocket.PingMessage, []byte{}, time.Now().Add(c.config.WriteTimeout)); err != nil {
+			if err := c.conn.WriteControl(gwebsocket.PingMessage, []byte{}, time.Now().Add(c.config.WriteTimeout)); err != nil {
 				return
 			}
 		}
@@ -254,12 +259,12 @@ type WSDialer struct {
 	// in responses.
 	Jar http.CookieJar
 
-	dialer *websocket.Dialer
+	dialer *gwebsocket.Dialer
 }
 
 func (wsd *WSDialer) Dial(urlStr string, requestHeader http.Header, config iwebsocket.Config) (*Client, *http.Response, error) {
 	if wsd.dialer == nil {
-		wsd.dialer = new(websocket.Dialer)
+		wsd.dialer = new(gwebsocket.Dialer)
 	}
 	wsd.dialer.NetDial = wsd.NetDial
 	wsd.dialer.Proxy = wsd.Proxy

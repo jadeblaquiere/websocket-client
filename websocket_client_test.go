@@ -26,7 +26,7 @@ package websocket_client
 import (
 	"context"
 	"encoding/binary"
-	"encoding/hex"
+	// "encoding/hex"
 	"fmt"
 	"sync"
 	"testing"
@@ -82,7 +82,7 @@ func (wss *wsServer) connect(con websocket.Connection) {
 	c := &wsClient{con: con, wss: wss}
 	wss.clients = append(wss.clients, c)
 
-	fmt.Printf("Connect # active clients : %d\n", len(wss.clients))
+	// fmt.Printf("Connect # active clients : %d\n", len(wss.clients))
 
 	con.OnMessage(c.echoRawMessage)
 
@@ -171,18 +171,23 @@ func TestConnectAndWait(t *testing.T) {
 		fmt.Println("Dialer returned nil client")
 		t.Fail()
 	} else {
+		// the wait here is longer than the Timeout, so the server will disconnect if
+		// ping/pong messages are not correctly triggered
 		for i := 0; i < 65; i++ {
-			fmt.Printf("(sleeping) %s\n", time.Now().Format("2006-01-02 15:04:05.000000"))
+			// fmt.Printf("(sleeping) %s\n", time.Now().Format("2006-01-02 15:04:05.000000"))
 			time.Sleep(1 * time.Second)
 		}
 		got_reply := false
-		fmt.Println("Dial complete")
+		// fmt.Println("Dial complete")
 		time.Sleep(1 * time.Second)
-		client.On("echo_reply", func(s string) { fmt.Println("client echo_reply", s); got_reply = true })
-		fmt.Println("ON complete")
+		client.On("echo_reply", func(s string) {
+			// fmt.Println("client echo_reply", s)
+			got_reply = true
+		})
+		// fmt.Println("ON complete")
 		time.Sleep(1 * time.Second)
 		client.Emit("echo", "hello")
-		fmt.Println("Emit complete")
+		// fmt.Println("Emit complete")
 		time.Sleep(1 * time.Second)
 		if !got_reply {
 			fmt.Println("No echo response")
@@ -218,12 +223,21 @@ func TestMixedMessages(t *testing.T) {
 		echo_count := int(0)
 		len_count := int(0)
 		raw_count := int(0)
-		fmt.Println("Dial complete")
+		// fmt.Println("Dial complete")
 		time.Sleep(1 * time.Second)
-		client.On("echo_reply", func(s string) { fmt.Println("client echo_reply", s); echo_count += 1 })
-		client.On("len_reply", func(i int) { fmt.Printf("client len_reply %d\n", i); len_count += 1 })
-		client.OnMessage(func(b []byte) { fmt.Println("client raw_reply", hex.EncodeToString(b)); raw_count += 1 })
-		fmt.Println("ON complete")
+		client.On("echo_reply", func(s string) {
+			// fmt.Println("client echo_reply", s)
+			echo_count += 1
+		})
+		client.On("len_reply", func(i int) {
+			// fmt.Printf("client len_reply %d\n", i)
+			len_count += 1
+		})
+		client.OnMessage(func(b []byte) {
+			// fmt.Println("client raw_reply", hex.EncodeToString(b))
+			raw_count += 1
+		})
+		// fmt.Println("ON complete")
 		time.Sleep(1 * time.Second)
 		go func() {
 			for i := 0; i < cycles; i++ {
@@ -247,17 +261,20 @@ func TestMixedMessages(t *testing.T) {
 				client.EmitMessage(bb)
 			}
 		}()
-		fmt.Println("Emit complete")
+		// fmt.Println("Emit complete")
 		time.Sleep(1 * time.Second)
-		fmt.Printf("echo, len, raw = %d, %d, %d\n", echo_count, len_count, raw_count)
+		// fmt.Printf("echo, len, raw = %d, %d, %d\n", echo_count, len_count, raw_count)
 		if echo_count != cycles {
 			fmt.Printf("echo count mismatch, %d != %d\n", echo_count, cycles)
+			t.Fail()
 		}
 		if len_count != cycles {
 			fmt.Printf("len count mismatch, %d != %d\n", len_count, cycles)
+			t.Fail()
 		}
 		if raw_count != cycles {
 			fmt.Printf("echo count mismatch, %d != %d\n", raw_count, cycles)
+			t.Fail()
 		}
 	}
 	wss.shutdown()
