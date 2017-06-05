@@ -34,7 +34,8 @@ import (
 	"time"
 
 	gwebsocket "github.com/gorilla/websocket"
-	iwebsocket "gopkg.in/kataras/iris.v6/adaptors/websocket"
+	//iwebsocket "gopkg.in/kataras/iris.v7/websocket"
+	iwebsocket "github.com/kataras/iris/websocket"
 )
 
 type (
@@ -225,9 +226,9 @@ func (c *Client) On(event string, f MessageFunc) {
 	c.onEventListeners[event] = append(c.onEventListeners[event], f)
 }
 
-func (c *Client) Disconnect() error {
-	return nil
-}
+//func (c *Client) Disconnect() error {
+//	return nil
+//}
 
 // WSDialer here is a shameless wrapper around gorilla.websocket.Dialer
 // which returns a wsclient.Client instead of the gorilla Connection on Dial()

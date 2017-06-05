@@ -23,17 +23,22 @@
 package websocket_client
 
 import (
-	"context"
+	stdContext "context"
 	"encoding/binary"
 	// "encoding/hex"
 	"fmt"
+	"net/http"
 	"sync"
 	"testing"
 	"time"
 
-	"gopkg.in/kataras/iris.v6"
-	"gopkg.in/kataras/iris.v6/adaptors/httprouter"
-	"gopkg.in/kataras/iris.v6/adaptors/websocket"
+	// "gopkg.in/kataras/iris.v7"
+	// "gopkg.in/kataras/iris.v7/adaptors/websocket"
+	"github.com/kataras/iris"
+	"github.com/kataras/iris/context"
+	"github.com/kataras/iris/core/host"
+	"github.com/kataras/iris/view"
+	"github.com/kataras/iris/websocket"
 )
 
 // test server model used to test client code
@@ -70,7 +75,9 @@ func (wsc *wsClient) disconnect() {
 type wsServer struct {
 	clients   []*wsClient
 	listMutex sync.Mutex
-	fw        *iris.Framework
+	app       *iris.Application
+	srv       *http.Server
+	super     *host.Supervisor
 	ws        websocket.Server
 }
 
@@ -115,15 +122,16 @@ func (wss *wsServer) disconnect(wsc *wsClient) {
 	panic("WSS:trying to delete client not in list")
 }
 
-func (wss *wsServer) index(ctx *iris.Context) {
+func (wss *wsServer) index(ctx context.Context) {
 	t := time.Now().Unix()
-	ctx.JSON(iris.StatusOK, indexResponse{RequestIP: ctx.RemoteAddr(), Time: t})
+	ctx.StatusCode(iris.StatusOK)
+	ctx.JSON(indexResponse{RequestIP: ctx.RemoteAddr(), Time: t})
 }
 
 func (wss *wsServer) startup() {
-	wss.fw = iris.New()
-	wss.fw.Adapt(httprouter.New())
-	wss.fw.Get("/", wss.index)
+	wss.app = iris.New()
+	wss.app.AttachView(view.HTML("./templates", ".html"))
+	wss.app.Get("/", wss.index)
 	// create our echo websocket server
 	ws := websocket.New(websocket.Config{
 		ReadTimeout:     60 * time.Second,
@@ -136,16 +144,18 @@ func (wss *wsServer) startup() {
 
 	ws.OnConnection(wss.connect)
 
-	// Adapt the websocket server.
-	// you can adapt more than one of course.
-	wss.fw.Adapt(ws)
+	// Attach the websocket server.
+	ws.Attach(wss.app)
 
-	go wss.fw.Listen(":8080")
+	wss.srv = &http.Server{Addr: ":8080"}
+	wss.super = host.New(wss.srv)
+
+	go wss.app.Run(iris.Server(wss.srv), iris.WithoutBanner)
 }
 
 func (wss *wsServer) shutdown() {
-	ctx, _ := context.WithTimeout(context.Background(), 5*time.Second)
-	wss.fw.Shutdown(ctx)
+	ctx, _ := stdContext.WithTimeout(stdContext.Background(), 5*time.Second)
+	wss.super.Shutdown(ctx)
 }
 
 func TestConnectAndWait(t *testing.T) {
@@ -225,7 +235,7 @@ func TestMixedMessages(t *testing.T) {
 		// fmt.Println("Dial complete")
 		time.Sleep(1 * time.Second)
 		client.On("echo_reply", func(s string) {
-			// fmt.Println("client echo_reply", s)
+			//fmt.Println("client echo_reply", s)
 			echo_count += 1
 		})
 		client.On("len_reply", func(i int) {
