@@ -25,10 +25,11 @@ package websocket_client
 import (
 	stdContext "context"
 	"encoding/binary"
-	// "encoding/hex"
+	"encoding/hex"
 	"fmt"
 	"net/http"
 	"sync"
+	"sync/atomic"
 	"testing"
 	"time"
 
@@ -63,6 +64,15 @@ func (wsc *wsClient) echoString(message string) {
 	wsc.con.Emit("echo_reply", message)
 }
 
+func (wsc *wsClient) reverseString(message string) {
+	// fmt.Println("recv :", message)
+	chars := []rune(message)
+	for i, j := 0, len(chars)-1; i < j; i, j = i+1, j-1 {
+		chars[i], chars[j] = chars[j], chars[i]
+	}
+	wsc.con.Emit("reverse_reply", string(chars))
+}
+
 func (wsc *wsClient) lenString(message string) {
 	// fmt.Println("recv :", message)
 	wsc.con.Emit("len_reply", len(message))
@@ -95,6 +105,8 @@ func (wss *wsServer) connect(con websocket.Connection) {
 	con.On("echo", c.echoString)
 
 	con.On("len", c.lenString)
+
+	con.On("reverse", c.reverseString)
 
 	con.OnDisconnect(c.disconnect)
 }
@@ -228,51 +240,85 @@ func TestMixedMessages(t *testing.T) {
 		fmt.Println("Dialer returned nil client")
 		t.Fail()
 	} else {
-		cycles := int(100)
-		echo_count := int(0)
-		len_count := int(0)
-		raw_count := int(0)
+		cycles := int32(500)
+		echo_count := int32(0)
+		len_count := int32(0)
+		reverse_count := int32(0)
+		raw_count := int32(0)
 		// fmt.Println("Dial complete")
 		time.Sleep(1 * time.Second)
 		client.On("echo_reply", func(s string) {
 			//fmt.Println("client echo_reply", s)
-			echo_count += 1
+			atomic.AddInt32(&echo_count, 1)
 		})
 		client.On("len_reply", func(i int) {
 			// fmt.Printf("client len_reply %d\n", i)
-			len_count += 1
+			atomic.AddInt32(&len_count, 1)
+		})
+		client.On("reverse_reply", func(s string) {
+			// fmt.Println("client reverse_reply", s)
+			atomic.AddInt32(&reverse_count, 1)
 		})
 		client.OnMessage(func(b []byte) {
 			// fmt.Println("client raw_reply", hex.EncodeToString(b))
-			raw_count += 1
+			atomic.AddInt32(&raw_count, 1)
 		})
 		// fmt.Println("ON complete")
 		time.Sleep(1 * time.Second)
+		var wg sync.WaitGroup
+		wg.Add(4)
 		go func() {
-			for i := 0; i < cycles; i++ {
+			defer wg.Done()
+			for i := 0; i < int(cycles); i++ {
 				s := fmt.Sprintf("hello %d", i)
-				client.Emit("echo", s)
+				if client.Emit("echo", s) != nil {
+					fmt.Println("error serializing echo request:", s)
+					t.Fail()
+				}
 			}
 		}()
 		go func() {
-			for i := 0; i < cycles; i++ {
+			defer wg.Done()
+			for i := 0; i < int(cycles); i++ {
+				s := fmt.Sprintf("hello %d", i)
+				if client.Emit("reverse", s) != nil {
+					fmt.Println("error serializing reverse request:", s)
+					t.Fail()
+				}
+			}
+		}()
+		go func() {
+			defer wg.Done()
+			for i := 0; i < int(cycles); i++ {
 				s := make([]byte, i, i)
 				for j := 0; j < i; j++ {
 					s[j] = byte('a')
 				}
-				client.Emit("len", string(s))
+				if client.Emit("len", string(s)) != nil {
+					fmt.Println("error serializing len request:", string(s))
+					t.Fail()
+				}
 			}
 		}()
 		go func() {
-			for i := 0; i < cycles; i++ {
+			defer wg.Done()
+			for i := 0; i < int(cycles); i++ {
 				bb := make([]byte, 8)
 				binary.BigEndian.PutUint64(bb, uint64(i))
-				client.EmitMessage(bb)
+				if client.EmitMessage(bb) != nil {
+					fmt.Println("error serializing raw request:", hex.EncodeToString(bb))
+					t.Fail()
+				}
 			}
 		}()
+		// ensure all messages sent
+		wg.Wait()
 		// fmt.Println("Emit complete")
+		// wait until we complete or timeout after 1 minute
 		for i := 0; i < 60; i++ {
-			if (echo_count == cycles) && (len_count == cycles) && (raw_count == cycles) {
+			if (atomic.LoadInt32(&echo_count) == cycles) &&
+				(atomic.LoadInt32(&len_count) == cycles) &&
+				(atomic.LoadInt32(&raw_count) == cycles) {
 				break
 			}
 			time.Sleep(1 * time.Second)
