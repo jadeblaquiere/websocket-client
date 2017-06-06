@@ -90,7 +90,7 @@ func (c *Client) readPump() {
 
 		// fmt.Println("recv:", string(message), "@", time.Now().Format("2006-01-02 15:04:05.000000"))
 
-		go c.messageReceived(message)
+		c.messageReceived(message)
 	}
 }
 
