@@ -26,11 +26,12 @@ package websocket_client
 import (
 	"bytes"
 	"crypto/tls"
-	"fmt"
+	// "fmt"
 	"net"
 	"net/http"
 	"net/url"
 	"strconv"
+	"sync"
 	"time"
 
 	gwebsocket "github.com/gorilla/websocket"
@@ -38,29 +39,40 @@ import (
 	iwebsocket "github.com/kataras/iris/websocket"
 )
 
-type (
-	// DisconnectFunc is the callback which fires when a client/connection closed
-	DisconnectFunc func()
-	// ErrorFunc is the callback which fires when an error happens
-	ErrorFunc (func(string))
-	// NativeMessageFunc is the callback for native websocket messages, receives one []byte parameter which is the raw client's message
-	NativeMessageFunc func([]byte)
-	// MessageFunc is the second argument to the Emitter's Emit functions.
-	// A callback which should receives one parameter of type string, int, bool or any valid JSON/Go struct
-	MessageFunc interface{}
-)
-
 // Client presents a subset of iris.websocket.Connection interface to support
 // client-initiated connections using the Iris websocket message protocol
 type Client struct {
 	conn                     *gwebsocket.Conn
 	config                   iwebsocket.Config
+	wAbort                   chan bool
 	wchan                    chan []byte
 	pchan                    chan []byte
-	onDisconnectListeners    []DisconnectFunc
-	onErrorListeners         []ErrorFunc
-	onNativeMessageListeners []NativeMessageFunc
-	onEventListeners         map[string][]MessageFunc
+	onDisconnectListeners    []iwebsocket.DisconnectFunc
+	onErrorListeners         []iwebsocket.ErrorFunc
+	onNativeMessageListeners []iwebsocket.NativeMessageFunc
+	onEventListeners         map[string][]iwebsocket.MessageFunc
+	connected                bool
+	dMutex                   sync.Mutex
+}
+
+// CommonInterface defines proper subset of Connection interface which is
+// satisfied by Client
+type CommonInterface interface {
+	// EmitMessage sends a native websocket message
+	EmitMessage([]byte) error
+	// Emit sends a message on a particular event
+	Emit(string, interface{}) error
+
+	// OnDisconnect registers a callback which fires when this connection is closed by an error or manual
+	OnDisconnect(iwebsocket.DisconnectFunc)
+
+	// OnMessage registers a callback which fires when native websocket message received
+	OnMessage(iwebsocket.NativeMessageFunc)
+	// On registers a callback to a particular event which fires when a message to this event received
+	On(string, iwebsocket.MessageFunc)
+	// Disconnect disconnects the client, close the underline websocket conn and removes it from the conn list
+	// returns the error, if any, from the underline connection
+	Disconnect() error
 }
 
 // in order to ensure all read operations are within a single goroutine
@@ -83,15 +95,29 @@ func (c *Client) readPump() {
 	for {
 		_, message, err := c.conn.ReadMessage()
 		if err != nil {
-			fmt.Println("panic @ ", time.Now().Format("2006-01-02 15:04:05.000000"))
-			panic(err)
+			// fmt.Println("disconnect @ ", time.Now().Format("2006-01-02 15:04:05.000000"))
+			c.wAbort <- false
+			return
 		}
 		c.conn.SetReadDeadline(time.Now().Add(c.config.ReadTimeout))
 
 		// fmt.Println("recv:", string(message), "@", time.Now().Format("2006-01-02 15:04:05.000000"))
 
-		c.messageReceived(message)
+		go c.messageReceived(message)
 	}
+}
+
+func (c *Client) fireDisconnect() {
+	c.dMutex.Lock()
+	defer c.dMutex.Unlock()
+	if c.connected == false {
+		return
+	}
+	// fmt.Println("fireDisconnect unique")
+	for i := range c.onDisconnectListeners {
+		c.onDisconnectListeners[i]()
+	}
+	c.connected = false
 }
 
 // messageReceived comes straight from iris/adapters/websocket/connection.go
@@ -155,13 +181,15 @@ func (c *Client) writePump() {
 			// fmt.Printf("WP: writing %s\n", string(wmsg))
 			w, err := c.conn.NextWriter(gwebsocket.TextMessage)
 			if err != nil {
-				fmt.Println("error getting NextWriter")
+				// fmt.Println("error getting NextWriter")
+				c.fireDisconnect()
 				return
 			}
 			w.Write(wmsg)
 
 			if err := w.Close(); err != nil {
-				fmt.Println("error closing NextWriter")
+				// fmt.Println("error closing NextWriter")
+				c.fireDisconnect()
 				return
 			}
 
@@ -169,13 +197,27 @@ func (c *Client) writePump() {
 			c.conn.SetWriteDeadline(time.Now().Add(c.config.WriteTimeout))
 			// fmt.Printf("sending PONG to %s\n", c.conn.UnderlyingConn().RemoteAddr().String())
 			if err := c.conn.WriteControl(gwebsocket.PongMessage, pmsg, time.Now().Add(c.config.WriteTimeout)); err != nil {
+				// fmt.Println("error sending PONG")
+				c.fireDisconnect()
 				return
 			}
+
+		// any write to wAbort aborts writePump
+		case sendClose := <-c.wAbort:
+			// fmt.Println("wAbort received")
+			if sendClose {
+				c.conn.WriteControl(gwebsocket.CloseMessage, gwebsocket.FormatCloseMessage(gwebsocket.CloseNormalClosure, ""),
+					time.Now().Add(c.config.WriteTimeout))
+			}
+			c.fireDisconnect()
+			return
 
 		case <-pingtimer.C:
 			c.conn.SetWriteDeadline(time.Now().Add(c.config.WriteTimeout))
 			// fmt.Printf("sending PING to %s\n", c.conn.UnderlyingConn().RemoteAddr().String())
 			if err := c.conn.WriteControl(gwebsocket.PingMessage, []byte{}, time.Now().Add(c.config.WriteTimeout)); err != nil {
+				// fmt.Println("error sending PING")
+				c.fireDisconnect()
 				return
 			}
 		}
@@ -201,9 +243,9 @@ func (c *Client) Emit(event string, data interface{}) error {
 	return nil
 }
 
-//func (c *Client) OnDisconnect(f DisconnectFunc) {
-//
-//}
+func (c *Client) OnDisconnect(f iwebsocket.DisconnectFunc) {
+	c.onDisconnectListeners = append(c.onDisconnectListeners, f)
+}
 
 //func (c *Client) OnError(f ErrorFunc) {
 //
@@ -212,23 +254,24 @@ func (c *Client) Emit(event string, data interface{}) error {
 // OnMessage designates a listener callback function for raw messages. If
 // multiple callback functions are specified, all will be called for each
 // message
-func (c *Client) OnMessage(f NativeMessageFunc) {
+func (c *Client) OnMessage(f iwebsocket.NativeMessageFunc) {
 	c.onNativeMessageListeners = append(c.onNativeMessageListeners, f)
 }
 
 // On designates a listener callback for a specific event tag.  If multiple
 // callback functions are specified, all will be called for each message
-func (c *Client) On(event string, f MessageFunc) {
+func (c *Client) On(event string, f iwebsocket.MessageFunc) {
 	if c.onEventListeners[event] == nil {
-		c.onEventListeners[event] = make([]MessageFunc, 0)
+		c.onEventListeners[event] = make([]iwebsocket.MessageFunc, 0)
 	}
 
 	c.onEventListeners[event] = append(c.onEventListeners[event], f)
 }
 
-//func (c *Client) Disconnect() error {
-//	return nil
-//}
+func (c *Client) Disconnect() error {
+	c.wAbort <- true
+	return nil
+}
 
 // WSDialer here is a shameless wrapper around gorilla.websocket.Dialer
 // which returns a wsclient.Client instead of the gorilla Connection on Dial()
@@ -296,10 +339,12 @@ func (wsd *WSDialer) Dial(urlStr string, requestHeader http.Header, config iwebs
 	c.conn = conn
 	c.config = config
 	c.config.Validate()
+	c.wAbort = make(chan bool)
 	c.wchan = make(chan []byte)
 	c.pchan = make(chan []byte)
-	c.onEventListeners = make(map[string][]MessageFunc)
+	c.onEventListeners = make(map[string][]iwebsocket.MessageFunc)
 	c.config.Validate()
+	c.connected = true
 
 	go c.writePump()
 	go c.readPump()
