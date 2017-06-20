@@ -1,5 +1,5 @@
-// Copyright (c) 2016-2017 Gerasimos Maropoulos
 // Copyright (c) 2017, Joseph deBlaquiere <jadeblaquiere@yahoo.com>
+// Portions Copyright (c) 2016-2017 Gerasimos Maropoulos
 //
 // Redistribution and use in source and binary forms, with or without
 // modification, are permitted provided that the following conditions are met:
@@ -358,6 +358,9 @@ func (wsd *WSDialer) Dial(urlStr string, requestHeader http.Header, config iwebs
 
 type ConnectCallback func(cc ClientConnection)
 
+// WSHandler is mostly a wrapper around Gorilla's websocket.Upgrader component
+// Generally any framework can use this handler to upgrade and manage a
+// websocket connection
 type WSHandler struct {
 	// HandshakeTimeout specifies the duration for the handshake to complete.
 	HandshakeTimeout time.Duration
