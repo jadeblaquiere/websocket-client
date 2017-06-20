@@ -278,7 +278,7 @@ func (c *client) Disconnect() error {
 	return nil
 }
 
-// WSDialer here is a shameless wrapper around gorilla.websocket.Dialer
+// WSDialer here is a wrapper around the gorilla.websocket.Dialer
 // which returns a wsclient.Client instead of the gorilla Connection on Dial()
 type WSDialer struct {
 	// NetDial specifies the dial function for creating TCP connections. If
@@ -343,7 +343,6 @@ func (wsd *WSDialer) Dial(urlStr string, requestHeader http.Header, config iwebs
 	c := new(client)
 	c.conn = conn
 	c.config = config
-	c.config.Validate()
 	c.wAbort = make(chan bool)
 	c.wchan = make(chan []byte)
 	c.pchan = make(chan []byte)
@@ -355,4 +354,88 @@ func (wsd *WSDialer) Dial(urlStr string, requestHeader http.Header, config iwebs
 	go c.readPump()
 
 	return c, response, nil
+}
+
+type ConnectCallback func(cc ClientConnection)
+
+type WSHandler struct {
+	// HandshakeTimeout specifies the duration for the handshake to complete.
+	HandshakeTimeout time.Duration
+
+	// ReadBufferSize and WriteBufferSize specify I/O buffer sizes. If a buffer
+	// size is zero, then buffers allocated by the HTTP server are used. The
+	// I/O buffer sizes do not limit the size of the messages that can be sent
+	// or received.
+	ReadBufferSize, WriteBufferSize int
+
+	// Subprotocols specifies the server's supported protocols in order of
+	// preference. If this field is set, then the Upgrade method negotiates a
+	// subprotocol by selecting the first match in this list with a protocol
+	// requested by the client.
+	Subprotocols []string
+
+	// Error specifies the function for generating HTTP error responses. If Error
+	// is nil, then http.Error is used to generate the HTTP response.
+	Error func(w http.ResponseWriter, r *http.Request, status int, reason error)
+
+	// CheckOrigin returns true if the request Origin header is acceptable. If
+	// CheckOrigin is nil, the host in the Origin header must not be set or
+	// must match the host of the request.
+	CheckOrigin func(r *http.Request) bool
+
+	// EnableCompression specify if the server should attempt to negotiate per
+	// message compression (RFC 7692). Setting this value to true does not
+	// guarantee that compression will be supported. Currently only "no context
+	// takeover" modes are supported.
+	EnableCompression bool
+
+	Config iwebsocket.Config
+
+	connectCallback ConnectCallback
+}
+
+// OnConnect registers a callback function which is called after an incoming
+// HTTP(S) request is upgraded to enable Websocket traffic and before message
+// traffic handling (send/receive) starts. The
+func (wsh *WSHandler) OnConnect(cb ConnectCallback) {
+	wsh.connectCallback = cb
+}
+
+func (wsh *WSHandler) HandleRequest(w http.ResponseWriter, r *http.Request) {
+	u := gwebsocket.Upgrader{
+		HandshakeTimeout:  wsh.HandshakeTimeout,
+		ReadBufferSize:    wsh.ReadBufferSize,
+		WriteBufferSize:   wsh.WriteBufferSize,
+		Subprotocols:      wsh.Subprotocols,
+		Error:             wsh.Error,
+		CheckOrigin:       wsh.CheckOrigin,
+		EnableCompression: wsh.EnableCompression,
+	}
+
+	conn, err := u.Upgrade(w, r, nil)
+
+	if err != nil {
+		return
+	}
+
+	c := new(client)
+	c.conn = conn
+	c.config = wsh.Config
+	c.wAbort = make(chan bool)
+	c.wchan = make(chan []byte)
+	c.pchan = make(chan []byte)
+	c.onEventListeners = make(map[string][]iwebsocket.MessageFunc)
+	c.config.Validate()
+	c.connected = true
+
+	if wsh.connectCallback == nil {
+		conn.Close()
+		return
+	}
+
+	wsh.connectCallback(c)
+
+	go c.readPump()
+
+	c.writePump()
 }

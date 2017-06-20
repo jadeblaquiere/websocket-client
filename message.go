@@ -1,5 +1,5 @@
-// with the exclusion of the package name the message protocol logic is a verbatim copy of
-// iris.v6/adapter/websocket/message.go
+// Note: with the exclusion of the package name the message protocol logic is
+// a verbatim copy of iris/websocket/message.go
 package websocket_client
 
 // Copyright 2017 Gerasimos Maropoulos, ΓΜ. All rights reserved.
